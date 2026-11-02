@@ -136,7 +136,9 @@ Potrebni su CMake 3.20+, C++20 GCC/Clang i OpenMP. Na Windowsu je provjeren GCC 
 cd implementacija
 ./scripts/build_windows.ps1 -Native
 ./build/nbody_bench.exe --n 1024 --threads 4 --backend all --output results/local/raw.csv
-./build/nbody_bench.exe --n 128 --mode simulate --steps 100 --precision double
+# Isti kod u FP64 preciznosti, bez template-a u implementaciji:
+./scripts/build_windows.ps1 -Native -DoublePrecision
+./build-double/nbody_bench.exe --n 128 --mode simulate --steps 100
 ```
 
 ```bash

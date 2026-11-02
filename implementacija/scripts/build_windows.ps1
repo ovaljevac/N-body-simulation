@@ -1,7 +1,8 @@
 param(
     [string]$ToolsBin = '',
     [switch]$Native,
-    [switch]$DebugBuild
+    [switch]$DebugBuild,
+    [switch]$DoublePrecision
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -18,9 +19,14 @@ else {
     $cmakeExe = (Resolve-Path -LiteralPath $cmakeExe).Path
 }
 $config = if ($DebugBuild) { 'Debug' } else { 'Release' }
-$build = Join-Path $repoRoot $(if ($DebugBuild) { 'build-debug' } else { 'build' })
+$buildName = if ($DoublePrecision) { 'build-double' } else { 'build' }
+if ($DebugBuild) { $buildName += '-debug' }
+$build = Join-Path $repoRoot $buildName
 $nativeFlag = if ($Native) { 'ON' } else { 'OFF' }
-& $cmakeExe -S $repoRoot -B $build -G 'MinGW Makefiles' "-DCMAKE_BUILD_TYPE=$config" "-DNBODY_NATIVE=$nativeFlag"
+$doubleFlag = if ($DoublePrecision) { 'ON' } else { 'OFF' }
+# FP32 i FP64 koriste isti čitljiv kod i odvojene build foldere.
+# Ostatak sistema ostaje nepromijenjen; PATH se dopunjava samo u ovom procesu.
+& $cmakeExe -S $repoRoot -B $build -G 'MinGW Makefiles' "-DCMAKE_BUILD_TYPE=$config" "-DNBODY_NATIVE=$nativeFlag" "-DNBODY_DOUBLE=$doubleFlag"
 if ($LASTEXITCODE) { throw 'CMake configuration failed' }
 & $cmakeExe --build $build --parallel 4
 if ($LASTEXITCODE) { throw 'Compilation failed' }
