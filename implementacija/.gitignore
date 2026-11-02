@@ -1,0 +1,5 @@
+/build*/
+/results/
+/COMMITOVI.md
+__pycache__/
+*.pyc
