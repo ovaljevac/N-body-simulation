@@ -4,7 +4,7 @@ Projekat iz predmeta **Paralelni računarski sistemi**: simulacija gravitacionog
 
 Cilj je odvojeno ispitati **ubrzanje paralelizacijom istog algoritma** i **razlike između algoritama za isti fizički problem**. Uz vrijeme izvršavanja analiziraju se skalabilnost, troškovi pojedinih faza i tačnost aproksimacija.
 
-Repozitorij je trenutno u početnoj fazi: sadrži literaturu i ovaj plan. Opisane implementacije, eksperimenti i struktura izvornog koda predstavljaju plan rada; rezultati mjerenja dodavat će se nakon implementacije.
+Implementiran je **prvi CPU dio za Direct N-body**: sekvencijalna osnova, blokovska verzija, SIMD, OpenMP i OpenMP + SIMD, uz FP32/FP64, leapfrog integraciju, numeričke testove i CSV benchmark. Sav kod, build konfiguracija, testovi, skripte i upute nalaze se u folderu [implementacija/](implementacija/). Rezultati mjerenja generišu se lokalno i nisu dio repozitorija. Barnes–Hut, FMM, CUDA i vizualizacija u nastavku dokumenta i dalje predstavljaju plan rada.
 
 ## Dokumentacija
 
@@ -127,26 +127,28 @@ Mjeri se ukupno vrijeme koraka, a za hijerarhijske algoritme posebno izgradnja s
 
 Za svako mjerenje bilježe se CPU model, RAM, tačna varijanta RTX 3050 i količina VRAM-a, operativni sistem, kompajler i njegove opcije, verzije CUDA-e i drajvera, broj niti, seed i svi simulacijski parametri. Sekvencijalna CPU osnova je optimizovan Release build s jednom niti; postavke automatske vektorizacije evidentiraju se za svaku varijantu.
 
-## Planirana organizacija repozitorija
+## Pokretanje implementiranog CPU dijela
 
-```text
-N-body-simulation/
-├── README.md
-├── docs/                 # Literatura i dokumentacija
-├── include/              # Zajednički interfejsi i strukture podataka
-├── src/
-│   ├── simulation/       # Početna stanja, integracija i glavni tok
-│   ├── direct/           # CPU i CUDA Direct N-body
-│   ├── barnes_hut/       # Stablo, CPU i CUDA Barnes–Hut
-│   └── fmm/              # Razvoji, CPU i CUDA FMM faze
-├── benchmarks/           # Mjerenja sila i kompletne simulacije
-├── tests/                # Provjere numerike i struktura podataka
-├── scripts/              # Obrada CSV podataka i grafikoni
-├── results/              # Rezultati eksperimenata
-└── CMakeLists.txt
+Potrebni su CMake 3.20+, C++20 GCC/Clang i OpenMP. Na Windowsu je provjeren GCC iz prenosivog w64devkit-a; klasični MSVC `/openmp` nije podržan za ovaj SIMD eksperiment.
+
+```powershell
+# Windows: koristi GCC/CMake sa PATH-a ili lokalne prenosive alate ako postoje.
+cd implementacija
+./scripts/build_windows.ps1 -Native
+./build/nbody_bench.exe --n 1024 --threads 4 --backend all --output results/local/raw.csv
+./build/nbody_bench.exe --n 128 --mode simulate --steps 100 --precision double
 ```
 
-Naredbe za izgradnju i pokretanje bit će dodate kada izvršni programi i CMake konfiguracija budu implementirani.
+```bash
+# Linux / GCC, ili Clang uz dostupan libomp
+cd implementacija
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+./build/nbody_bench --n 1024 --threads 4 --backend all
+```
+
+Python skripte za ponavljanja, statistiku i grafikone opisane su u [uputama implementacije](implementacija/README.md). CSV datoteke, grafikoni i podaci o lokalnom hardveru spremaju se u ignorisani folder `implementacija/results/`.
 
 ## Pojmovi i skraćenice
 
