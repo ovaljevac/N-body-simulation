@@ -16,15 +16,31 @@ using Real = double;
 using Real = float;
 #endif
 
-enum class Backend { sequential, blocked, simd, openmp, openmp_simd };
+enum class Backend { sequential, blocked, simd, openmp, openmp_simd,
+    bh_sequential, bh_optimized, bh_openmp };
 constexpr std::array backends = {Backend::sequential, Backend::blocked,
-    Backend::simd, Backend::openmp, Backend::openmp_simd};
+    Backend::simd, Backend::openmp, Backend::openmp_simd,
+    Backend::bh_sequential, Backend::bh_optimized, Backend::bh_openmp};
 
+// Direct koristi velicine blokova, a Barnes-Hut theta i granice podjele.
+// theta=0 otvara sve cvorove; veci theta dopusta vise grupnih aproksimacija.
 struct Config {
     Real gravity = 1;
     Real epsilon = Real(0.01);
     std::size_t target_block = 32;
     std::size_t source_block = 256;
+    Real theta = Real(0.5);
+    std::size_t leaf_capacity = 8;
+    std::size_t max_depth = 32;
+};
+
+// Za Barnes-Hut odvajamo gradnju stabla od obilaska. Vremena su zidna,
+// a ukupno vrijeme javnog poziva dodatno uključuje pripremu izlaza i validaciju.
+struct SolverTiming {
+    double tree_seconds = 0;
+    double force_seconds = 0;
+    std::size_t tree_nodes = 0;
+    std::size_t tree_depth = 0;
 };
 
 // Odvojeni nizovi olakšavaju uzastopno čitanje položaja i SIMD obradu.
@@ -56,6 +72,7 @@ struct Error {
 std::string_view name(Backend backend);
 Backend parse_backend(std::string_view value);
 bool parallel(Backend backend);
+bool barnes_hut_backend(Backend backend);
 void validate(const Bodies& bodies, const Config& config);
 Bodies initial_state(std::size_t count, std::uint64_t seed, std::string_view distribution);
 
@@ -66,11 +83,12 @@ void blocked(const Bodies&, Acceleration&, const Config&);
 void simd(const Bodies&, Acceleration&, const Config&);
 void openmp(const Bodies&, Acceleration&, const Config&);
 void openmp_simd(const Bodies&, Acceleration&, const Config&);
-void accelerations(const Bodies&, Acceleration&, const Config&, Backend);
+void barnes_hut(const Bodies&, Acceleration&, const Config&, Backend, SolverTiming* = nullptr);
+void accelerations(const Bodies&, Acceleration&, const Config&, Backend, SolverTiming* = nullptr);
 
 Reference reference_forces(const Bodies&, const Config&);
 Error compare(const Acceleration&, const Reference&);
-void step(Bodies&, Acceleration&, const Config&, Backend, double dt);
+void step(Bodies&, Acceleration&, const Config&, Backend, double dt, SolverTiming* = nullptr);
 double energy(const Bodies&, const Config&);
 std::array<double, 3> momentum(const Bodies&);
 

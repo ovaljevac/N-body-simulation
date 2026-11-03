@@ -17,6 +17,9 @@ std::string_view name(Backend backend) {
     case Backend::simd: return "simd";
     case Backend::openmp: return "openmp";
     case Backend::openmp_simd: return "openmp_simd";
+    case Backend::bh_sequential: return "bh_sequential";
+    case Backend::bh_optimized: return "bh_optimized";
+    case Backend::bh_openmp: return "bh_openmp";
     }
     throw std::invalid_argument("Nepoznata verzija algoritma");
 }
@@ -29,7 +32,11 @@ Backend parse_backend(std::string_view value) {
 }
 
 bool parallel(Backend backend) {
-    return backend == Backend::openmp || backend == Backend::openmp_simd;
+    return backend == Backend::openmp || backend == Backend::openmp_simd || backend == Backend::bh_openmp;
+}
+
+bool barnes_hut_backend(Backend backend) {
+    return backend == Backend::bh_sequential || backend == Backend::bh_optimized || backend == Backend::bh_openmp;
 }
 
 void validate(const Bodies& bodies, const Config& config) {
@@ -37,8 +44,10 @@ void validate(const Bodies& bodies, const Config& config) {
     if (!std::isfinite(config.gravity) || config.gravity < 0 ||
         !std::isfinite(config.epsilon) || config.epsilon <= 0 ||
         !std::isfinite(epsilon2) || epsilon2 == 0 ||
-        config.target_block == 0 || config.source_block == 0) {
-        throw std::invalid_argument("G mora biti nenegativan, epsilon pozitivan i blokovi nenulti");
+        config.target_block == 0 || config.source_block == 0 ||
+        !std::isfinite(config.theta) || config.theta < 0 || config.theta > 1 ||
+        config.leaf_capacity == 0 || config.max_depth == 0 || config.max_depth > 64) {
+        throw std::invalid_argument("Neispravan G, epsilon, blokovi ili Barnes-Hut parametri (theta 0..1, dubina 1..64)");
     }
 
     // Sve veličine moraju opisivati isti broj tijela. Ova provjera sprečava
@@ -80,8 +89,11 @@ Bodies initial_state(std::size_t count, std::uint64_t seed, std::string_view dis
     return bodies;
 }
 
+// Zajednicki ulaz provjerava podatke i priprema izlaz prije izbora algoritma.
+// Ostatak simulatora zato jednako poziva Direct i Barnes-Hut izvedbe.
 void accelerations(const Bodies& bodies, Acceleration& acceleration,
-                   const Config& config, Backend backend) {
+                   const Config& config, Backend backend, SolverTiming* timing) {
+    if (timing) *timing = {};
     validate(bodies, config);
     acceleration.x.resize(bodies.size());
     acceleration.y.resize(bodies.size());
@@ -93,6 +105,9 @@ void accelerations(const Bodies& bodies, Acceleration& acceleration,
     case Backend::simd: simd(bodies, acceleration, config); break;
     case Backend::openmp: openmp(bodies, acceleration, config); break;
     case Backend::openmp_simd: openmp_simd(bodies, acceleration, config); break;
+    case Backend::bh_sequential:
+    case Backend::bh_optimized:
+    case Backend::bh_openmp: barnes_hut(bodies, acceleration, config, backend, timing); break;
     default: throw std::invalid_argument("Nepoznata verzija algoritma");
     }
 }
@@ -127,6 +142,8 @@ Reference reference_forces(const Bodies& bodies, const Config& config) {
     return reference;
 }
 
+// Relativna L2 greska poredi velicinu ukupnog odstupanja sa referencom.
+// Dodatno cuvamo najvece apsolutno odstupanje ubrzanja jednog tijela.
 Error compare(const Acceleration& acceleration, const Reference& reference) {
     const auto count = reference.x.size();
     if (reference.y.size() != count || reference.z.size() != count ||
@@ -151,7 +168,7 @@ Error compare(const Acceleration& acceleration, const Reference& reference) {
 }
 
 void step(Bodies& bodies, Acceleration& acceleration, const Config& config,
-          Backend backend, double dt) {
+          Backend backend, double dt, SolverTiming* timing) {
     if (!std::isfinite(dt) || dt <= 0 || !std::isfinite(Real(dt)) || Real(dt) == 0) {
         throw std::invalid_argument("Vremenski korak mora biti pozitivan i predstavljiv");
     }
@@ -173,7 +190,7 @@ void step(Bodies& bodies, Acceleration& acceleration, const Config& config,
         bodies.y[i] += interval * bodies.vy[i];
         bodies.z[i] += interval * bodies.vz[i];
     }
-    accelerations(bodies, acceleration, config, backend);
+    accelerations(bodies, acceleration, config, backend, timing);
     for (std::size_t i = 0; i < bodies.size(); ++i) {
         bodies.vx[i] += half * acceleration.x[i];
         bodies.vy[i] += half * acceleration.y[i];
@@ -181,6 +198,8 @@ void step(Bodies& bodies, Acceleration& acceleration, const Config& config,
     }
 }
 
+// Dijagnostika sabira kineticku i omeksanu potencijalnu energiju.
+// Direktno obilazi parove i zato se racuna izvan mjerenog vremena solvera.
 double energy(const Bodies& bodies, const Config& config) {
     validate(bodies, config);
     double total = 0;
@@ -200,6 +219,8 @@ double energy(const Bodies& bodies, const Config& config) {
     return total;
 }
 
+// Ukupna kolicina kretanja je suma mase puta brzina po sve tri ose.
+// Benchmark prati njenu promjenu da bi se vidjelo odstupanje tokom simulacije.
 std::array<double, 3> momentum(const Bodies& bodies) {
     std::array<double, 3> result{};
     for (std::size_t i = 0; i < bodies.size(); ++i) {

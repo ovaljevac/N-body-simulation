@@ -19,6 +19,8 @@ struct Options {
     std::uint64_t seed = 42;
     int threads = 4;
     double dt = 0.001;
+    double max_relative_error = 0.05;
+    std::string algorithm = "direct";
     std::string backend = "all", distribution = "uniform", mode = "force", output;
     nbody::Config config;
 };
@@ -49,10 +51,11 @@ Options read_options(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
         if (key == "--help") {
-            std::cout << "nbody_bench --n N --backend all|sequential|blocked|simd|openmp|openmp_simd\n"
+            std::cout << "nbody_bench --n N --algorithm direct|barnes_hut|all --backend all|sequential|blocked|simd|openmp|openmp_simd|bh_sequential|bh_optimized|bh_openmp\n"
                       << " --threads P --mode force|simulate --steps K --repeats R --warmup W\n"
                       << " --distribution uniform|clustered --seed S --epsilon E --gravity G --dt H\n"
                       << " --target-block B --source-block B --output file.csv\n"
+                      << " --theta T --leaf-capacity L --max-depth D --max-relative-error E\n"
                       << "FP64 build: cmake -S . -B build-double -DNBODY_DOUBLE=ON -DCMAKE_BUILD_TYPE=Release\n";
             std::exit(0);
         }
@@ -75,6 +78,11 @@ Options read_options(int argc, char** argv) {
         else if (key == "--gravity") options.config.gravity = nbody::Real(read_number(value));
         else if (key == "--target-block") options.config.target_block = read_integer(value);
         else if (key == "--source-block") options.config.source_block = read_integer(value);
+        else if (key == "--theta") options.config.theta = nbody::Real(read_number(value));
+        else if (key == "--leaf-capacity") options.config.leaf_capacity = read_integer(value);
+        else if (key == "--max-depth") options.config.max_depth = read_integer(value);
+        else if (key == "--max-relative-error") options.max_relative_error = read_number(value);
+        else if (key == "--algorithm") options.algorithm = value;
         else if (key == "--backend") options.backend = value;
         else if (key == "--distribution") options.distribution = value;
         else if (key == "--mode") options.mode = value;
@@ -88,6 +96,10 @@ Options read_options(int argc, char** argv) {
     }
     if (options.mode != "force" && options.mode != "simulate") {
         throw std::invalid_argument("Režim mora biti force ili simulate");
+    }
+    if ((options.algorithm != "direct" && options.algorithm != "barnes_hut" && options.algorithm != "all") ||
+        options.max_relative_error <= 0) {
+        throw std::invalid_argument("Nepoznat algoritam ili nepozitivna tolerancija greske");
     }
     if (options.backend != "all") nbody::parse_backend(options.backend);
     return options;
@@ -108,17 +120,27 @@ void run_benchmark(const Options& options, std::ostream& output) {
 
     output << "backend,precision,mode,distribution,n,threads,requested_threads,seed,gravity,epsilon,dt,steps,repeat,"
            << "total_seconds,seconds_per_step,relative_l2,max_absolute,energy_relative_drift,momentum_absolute_drift,"
-           << "checksum,target_block,source_block,compiler,build_type,native\n";
+           << "checksum,target_block,source_block,compiler,build_type,native,algorithm,theta,leaf_capacity,max_depth,"
+           << "max_relative_error,tree_seconds_per_step,force_seconds_per_step,tree_nodes,tree_depth\n";
     output << std::setprecision(17);
 
     // Svaka verzija prvo računa sile na istom početnom stanju. Tek nakon
     // provjere prema FP64 referenci počinju zagrijavanje i mjereni prolazi.
     for (auto backend : nbody::backends) {
         if (options.backend != "all" && nbody::name(backend) != options.backend) continue;
+        const bool bh = nbody::barnes_hut_backend(backend);
+        // Eksplicitni backend bira jednu verziju; algorithm filtrira grupni
+        // poziv. Stari --backend all i dalje podrazumijevano pokrece samo Direct.
+        if (options.backend == "all" && options.algorithm != "all" &&
+            (bh ? "barnes_hut" : "direct") != options.algorithm) continue;
         nbody::Acceleration checked;
         nbody::accelerations(initial, checked, options.config, backend);
         const auto error = nbody::compare(checked, reference);
-        if (error.relative_l2 > (sizeof(nbody::Real) == 4 ? 1e-4 : 1e-11)) {
+        // Direct i BH bez aproksimacije imaju stroge numericke pragove.
+        // Za priblizni BH prag zadaje korisnik, a stvarna greska ostaje u CSV-u.
+        const double allowed_error = bh && options.config.theta > 0 ? options.max_relative_error
+            : (sizeof(nbody::Real) == 4 ? 1e-4 : 1e-11);
+        if (error.relative_l2 > allowed_error) {
             throw std::runtime_error("Sile se ne slažu sa referencom");
         }
 
@@ -126,16 +148,21 @@ void run_benchmark(const Options& options, std::ostream& output) {
             auto bodies = initial;
             nbody::Acceleration acceleration;
             nbody::accelerations(bodies, acceleration, options.config, backend);
+            nbody::SolverTiming timing;
+            double tree_seconds = 0, force_seconds = 0;
 
-            // Alokacije i početna sila za leapfrog su izvan tajmera. Force
-            // režim ponavlja isti snimak, a simulate režim pomjera tijela.
+            // Početni izlazni nizovi i sila za leapfrog pripremaju se izvan
+            // tajmera. Svaka naredna BH gradnja, uključujući njene alokacije,
+            // ulazi u vrijeme; force miruje, a simulate pomjera tijela.
             const auto start = std::chrono::steady_clock::now();
             for (std::size_t k = 0; k < options.steps; ++k) {
                 if (options.mode == "force") {
-                    nbody::accelerations(bodies, acceleration, options.config, backend);
+                    nbody::accelerations(bodies, acceleration, options.config, backend, &timing);
                 } else {
-                    nbody::step(bodies, acceleration, options.config, backend, options.dt);
+                    nbody::step(bodies, acceleration, options.config, backend, options.dt, &timing);
                 }
+                tree_seconds += timing.tree_seconds;
+                force_seconds += timing.force_seconds;
             }
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             if (repeat < options.warmup) continue;
@@ -164,7 +191,11 @@ void run_benchmark(const Options& options, std::ostream& output) {
                    << options.steps << ',' << repeat - options.warmup << ',' << seconds << ',' << seconds / options.steps << ','
                    << error.relative_l2 << ',' << error.max_absolute << ',' << energy_drift << ',' << momentum_drift << ','
                    << checksum << ',' << options.config.target_block << ',' << options.config.source_block << ','
-                   << __VERSION__ << ',' << NBODY_BUILD_TYPE << ',' << NBODY_NATIVE_BUILD << '\n';
+                   << __VERSION__ << ',' << NBODY_BUILD_TYPE << ',' << NBODY_NATIVE_BUILD << ','
+                   << (bh ? "barnes_hut" : "direct") << ',' << options.config.theta << ','
+                   << options.config.leaf_capacity << ',' << options.config.max_depth << ',' << allowed_error << ','
+                   << tree_seconds / options.steps << ',' << force_seconds / options.steps << ','
+                   << timing.tree_nodes << ',' << timing.tree_depth << '\n';
         }
     }
 }
