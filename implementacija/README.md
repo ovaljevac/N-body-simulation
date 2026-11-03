@@ -1,6 +1,6 @@
-# Direct N-body prvi CPU dio
+# N-body CPU implementacija: Direct i Barnes-Hut
 
-Direktni algoritam računa gravitaciono djelovanje svakog tijela na svako drugo tijelo. Implementacija je namijenjena poređenju CPU optimizacija, uz jasno vidljive petlje i isti fizički model.
+Direct računa gravitaciono djelovanje svakog tijela na svako drugo, a Barnes-Hut udaljene grupe zamjenjuje njihovom masom i centrom mase. Implementacija poredi CPU optimizacije uz isti fizički model i provjeru greške aproksimacije.
 
 Kod, CMake konfiguracija, testovi, benchmark i skripte objedinjeni su u ovom folderu. Sve relativne putanje i komande ispod polaze iz foldera `implementacija/`. Literatura je u zasebnom repozitorijskom folderu `docs/`. Generisani rezultati, grafikoni i lokalni metapodaci ostaju u ignorisanom folderu `results/`.
 
@@ -14,11 +14,21 @@ Kod, CMake konfiguracija, testovi, benchmark i skripte objedinjeni su u ovom fol
 | `openmp` | Iste petlje kao `sequential`, uz OpenMP raspodjelu ciljnih tijela | Zadani P |
 | `openmp_simd` | Iste SIMD petlje uz OpenMP raspodjelu ciljnih tijela | Zadani P |
 
-Sve varijante podržavaju `float` i `double`, isti 3D model i iste ulaze. Računska složenost svih pet ostaje O(N²), uz O(N) memoriju. Ovo je implementacija Direct algoritma. Barnes–Hut, FMM, GPU i prikaz nisu implementirani u ovoj fazi.
+Ovih pet Direct varijanti podržavaju `float` i `double`, isti 3D model i iste ulaze. Njihova složenost ostaje O(N²), uz O(N) memoriju.
+
+| Barnes-Hut varijanta | Obilazak i redoslijed ciljeva | Niti |
+| --- | --- | --- |
+| `bh_sequential` | Rekurzivni obilazak djece, ciljevi izvornim redoslijedom | 1 |
+| `bh_optimized` | Iterativni obilazak bez steka, ciljevi prostornim redoslijedom | 1 |
+| `bh_openmp` | Isti iterativni obilazak, ciljevi podijeljeni OpenMP nitima | Zadani P |
+
+Barnes-Hut koristi FP32/FP64 i isti integrator. FMM, GPU i prikaz nisu implementirani.
 
 `src/direct.cpp` sadrži tri direktno čitljive funkcije: `sequential`, `blocked` i `openmp`. `src/simd.cpp` sadrži `simd` i `openmp_simd`. Slične petlje su namjerno napisane zasebno da se razlike mogu pokazati i objasniti.
 
 `src/nbody.h` sadrži strukture i deklaracije, a `src/nbody.cpp` inicijalizaciju, provjeru ulaza, izbor funkcije, referentni proračun i integrator. `main.cpp` vodi benchmark, `tests.cpp` provjerava numeriku, a tri skripte služe buildu i obradi rezultata. Nema template kernela, praznih omotača ni unaprijed dodanih foldera za buduće algoritme.
+
+`src/barnes_hut.cpp` sadrži gradnju octree stabla i tri izvedbe obilaska. Interni čvorovi i funkcije ostaju u tom jednom izvornom fajlu. Svi testovi su objedinjeni u `tests.cpp`, bez posebnog Barnes-Hut testnog programa.
 
 ## Fizički model i podaci
 
@@ -49,6 +59,38 @@ OpenMP raspoređuje ciljna tijela sa `schedule(static)`. Svaka nit upisuje samo 
 Za kontrolisan SIMD eksperiment automatska vektorizacija u skalarnom i blokovskom prevodilačkom modulu eksplicitno je isključena. SIMD modul se prevodi zasebno. Koriste se Release optimizacije i `-fno-math-errno`, bez globalnog `-ffast-math`. `NBODY_NATIVE=ON` dodaje `-march=native`; takav binarni program može zahtijevati instrukcije trenutnog procesora. Standardni build bez te opcije je prenosiviji.
 
 U lokalnom GCC build-u SIMD potvrđuju i izvještaj kompajlera i instrukcije `vsqrtps`, `vsqrtpd`, `vdivps`, `vdivpd` u objektnoj datoteci. Sama direktiva u kodu nije uzeta kao dokaz vektorizacije.
+
+## Barnes-Hut: stablo i tri CPU izvedbe
+
+Gradnja počinje kockom koja obuhvata sva tijela. Svaki unutrašnji čvor dijeli se na najviše osam oktanata. Čvor čuva ukupnu masu, centar mase i raspon tijela koja mu pripadaju. Podjela prestaje na `leaf_capacity` tijela, na `max_depth` ili kada su sve pozicije u čvoru jednake. Višestruki list tada obrađuje svoja tijela direktno. Podrazumijevano su kapacitet lista 8 i maksimalna dubina 32; dozvoljene dubine su 1..64, a korijen ima dubinu 0.
+
+Za udaljeni unutrašnji čvor koristi se kriterij `sirina / udaljenost_do_centra_mase < theta`. U kodu je poređenje kvadrirano da ne zahtijeva dodatni korijen. Parametar `theta` je u rasponu 0..1, podrazumijevano 0.5. Manja vrijednost obično znači više rada i manju grešku, ali greška ne mora biti strogo monotona na svakom skupu. `theta=0` otvara sve čvorove i daje Direct proračun do razlike u redoslijedu sabiranja. Listovi se uvijek računaju direktno.
+
+Čvor koji sadrži ciljno tijelo nikad se ne prihvata kao jedna masa. Pripadnost se provjerava preko raspona indeksa u prostornom poretku, a ne preko poređenja koordinata na granicama. U listu se vlastiti indeks preskače. I udaljene mase i pojedinačna tijela koriste isti Plummerov epsilon kao Direct. Mase i centri mase sabiraju se u `double`, a u čvorovima čuvaju kao `Real`; doprinosi ubrzanja računaju se u izabranoj FP32/FP64 preciznosti.
+
+Sve tri verzije grade isto stablo u jednom nizu. Osnovna verzija rekurzivno prati djecu. Optimizovana koristi preorder raspored: poslije otvaranja ide na sljedeći čvor, a poslije prihvatanja ili lista koristi indeks `next`, iza cijelog podstabla. Ne koristi rekurziju niti eksplicitni stek. Ciljeve dodatno obrađuje prostornim redoslijedom radi ponovne upotrebe čvorova u kešu, ali rezultat vraća na izvorni indeks tijela. Optimizacija ne mijenja theta, centar mase ni posjećene izvore; nije obećanje ubrzanja na svakoj veličini.
+
+`bh_openmp` raspoređuje te iste ciljeve sa `schedule(static)`. Niti samo čitaju završeno stablo i upisuju različite elemente ubrzanja. Gradnja je sekvencijalna u sve tri verzije, uključena u ukupno vrijeme, i ponavlja se pri svakom novom računanju sila. Ovo nije paralelna gradnja stabla. Očekivano ponašanje na uobičajenim rasporedima je približno O(N log N), ali theta=0 i degenerisani rasporedi mogu vratiti kvadratni posao.
+
+Primjeri iz foldera `implementacija/`:
+
+```powershell
+# Tri BH verzije na istom ulazu i pri istoj aproksimaciji:
+./build/nbody_bench.exe --algorithm barnes_hut --n 4096 --theta 0.5 --threads 4
+# Samo jedna verzija; theta=0 isključuje grupisanu aproksimaciju:
+./build/nbody_bench.exe --backend bh_optimized --n 257 --theta 0
+# Simulacija kretanja i ponovno građenje stabla:
+./build/nbody_bench.exe --backend bh_openmp --mode simulate --n 257 --steps 20
+# Više theta vrijednosti i broj niti; rezultati ostaju lokalno:
+python scripts/run_cpu_benchmarks.py --exe build/nbody_bench.exe --algorithm barnes_hut --theta 0.2 0.5 0.8 --sizes 257 1024 4096 --threads 1 2 4 --max-relative-error 0.12 --out results/barnes_hut
+python scripts/plot_cpu_results.py results/barnes_hut/summary.csv
+```
+
+Bez opcije `--algorithm` ostaje stari Direct izbor. `--algorithm all` uključuje oba algoritma. Eksplicitni `--backend bh_...` bira traženu BH verziju bez dodatne opcije algorithm.
+
+CSV dodaje algorithm, theta, kapacitet lista, maksimalnu dubinu, toleranciju, broj čvorova, dostignutu dubinu te odvojena vremena gradnje i obilaska po koraku. Oslobađanje stabla i vanjska validacija nisu dio te dvije faze, ali jesu dio ukupnog vremena. Broj čvorova i dubina odnose se na posljednju evaluaciju. Direct u BH faznim kolonama ima nule. Poređenje sa Direct referencom je izvan tajmera i ostaje O(N²), pa veliki ulazi imaju trošak provjere i kada je sam Barnes-Hut brži.
+
+Približni BH prolaz odbija početni rezultat ako relativna L2 greška pređe `--max-relative-error` (podrazumijevano 0.05). To je izmjereni prag za ulaz, ne matematička garancija za svaki theta i svako tijelo. Za theta=0 i za Direct ostaju stroži pragovi 1e-4 u FP32 i 1e-11 u FP64.
 
 ## Leapfrog integracija
 
@@ -81,7 +123,7 @@ Windows skripta koristi alate sa PATH-a ili prenosive alate iz radnog prostora, 
 ## Šta benchmark mjeri
 
 - `--mode force` ponavlja računanje ubrzanja na zamrznutom ulazu. `--steps` je broj force evaluacija u jednom ponavljanju; CSV `seconds_per_step` je vrijeme jedne evaluacije.
-- `--mode simulate` mjeri zadani broj leapfrog koraka. Početna force evaluacija i alokacije nisu dio vremena koraka; redovne force evaluacije, integracija i validacija ulaza jesu.
+- `--mode simulate` mjeri zadani broj leapfrog koraka. Početna force evaluacija i priprema izlaznih nizova nisu dio vremena koraka; redovne force evaluacije, integracija i validacija ulaza jesu. Sve naredne Barnes-Hut gradnje, sa svojim alokacijama, uključene su u vrijeme u oba režima.
 - Podrazumijevano je jedno cijelo zagrijavanje i pet mjerenih ponavljanja. Svako ponavljanje počinje iz istog početnog stanja.
 - Prije mjerenja provjerava se sila prema FP64 sekvencijalnoj referenci. CSV `relative_l2` i `max_absolute` odnose se na početni zamrznuti ulaz, ne na konačno stanje različitih putanja.
 - Provjera energije, impulsa i checksum računaju se izvan tajmera. U force režimu energijski drift je nula jer nema integracije. Za nultu početnu energiju normalizacija koristi donju granicu 1e-30.
@@ -97,22 +139,28 @@ python scripts/plot_cpu_results.py results/local/summary.csv
 
 Prva skripta koristi samo Python standardnu biblioteku i čuva `raw.csv`, `summary.csv` i `metadata.json` sa tačnim komandama i podacima o sistemu. Druga zahtijeva Matplotlib i pravi PNG/SVG grafikon. Namjerno se ne pokreće N=100.000 i stotinu koraka kao podrazumijevani test.
 
-`speedup_vs_sequential` pokazuje ukupno ubrzanje prema skalarnoj osnovi. `speedup_vs_matching_serial` za OpenMP poredi sa `sequential`, a za OpenMP+SIMD sa `simd`, jer su to sada odgovarajuće serijske petlje. CPU efikasnost računa se iz tog drugog odnosa podijeljenog stvarnim brojem niti. Stare lokalne rezultate iz prethodne strukture treba zadržati odvojeno; njihove OpenMP verzije koristile su blokovske petlje.
+`speedup_vs_sequential` poredi sa osnovnom verzijom istog algoritma (`sequential` ili `bh_sequential`). `speedup_vs_matching_serial` za OpenMP koristi `sequential`, za OpenMP+SIMD `simd`, a za BH OpenMP `bh_optimized` pri istom theta. CPU efikasnost je taj drugi odnos podijeljen stvarnim brojem niti. BH ukupno ubrzanje uključuje i sekvencijalnu gradnju. Ako je zadan `--algorithm all`, `speedup_vs_direct` dodatno poredi sa Direct sekvencijalnom verzijom; BH pri tome ima izmjerenu aproksimacijsku grešku. Stari lokalni rezultati ostaju odvojeno.
 
 ## Provjera ispravnosti
 
-CTest pokreće numeričke provjere, kratko mjerenje sila, kratku simulaciju i provjere neispravnih CLI parametara. Isti testovi se pokreću u FP32 i FP64 build-u. Numeričke provjere uključuju:
+`tests.cpp` sadrži sedam scenarija: pet zajedničkih i dva za Barnes-Hut. Isti program pokreće se u FP32 i FP64 buildu.
 
-- prazan i jednočlani sistem, vlastito djelovanje i jednaku poziciju tijela uz softening;
-- analitičko ubrzanje para sa različitim masama i odgovarajuću promjenu impulsa;
-- FP32/FP64, uniformne/klasterisane ulaze i veličine koje nisu djeljive blokovima;
-- sve backend-e na 1, 2 i 4 niti, poređenje sa FP64 referencom i nepromijenjene ulazne podatke;
-- translacionu i permutacionu invarijantnost i skaliranje mase;
-- slobodno kretanje, dosljednost integracije između backend-a i poboljšanje orbitne greške smanjenjem dt;
-- neispravne mase, SoA dužine, NaN podatke, parametre blokova i nepoznat backend.
+| Scenario | Šta se provjerava |
+| --- | --- |
+| Prazan sistem i jedno tijelo | Prazni izlazi i nulto vlastito djelovanje, u svim verzijama. |
+| Dva tijela sa poznatim rezultatom | Smjer i iznos ubrzanja za mase 2 i 3; BH list kapaciteta 1 i theta=1 provjeravaju otvaranje roditelja koji sadrži cilj. |
+| Jednake pozicije | Za 17 tijela na istom položaju sva ubrzanja moraju ostati nula, bez dijeljenja nulom ili beskonačne podjele stabla. |
+| Referenca i paralelizacija | N=33,257, seed=42, oba rasporeda, blokovi 7/19; rezultat prema Direct FP64 referenci, a paralelne verzije dodatno identično na 1 i 4 niti. |
+| Kratka simulacija | Deset koraka dt=0.001 za 33 tijela; poređenje sve tri koordinate i brzine sa Direct sekvencijalnom putanjom. |
+| BH aproksimacija | N=257, theta=0.5, oba rasporeda; relativna L2 greška ispod 0.01 na ovim skupovima i identični rezultati tri BH izvedbe. |
+| BH maksimalna dubina | Jedno udaljeno i 32 bliska tijela, list kapaciteta 1, dubina 4; podjela staje na granici i nijedno tijelo nije izgubljeno. |
 
-Testovi koriste eksplicitne provjere koje ostaju uključene u Release build-u. Broj izvršenih provjera ispisuje `nbody_tests`. Testovi nisu zamjena za profilisanje velikih skupova, analizu dugih putanja ili konačnu evaluaciju za predmet.
+Zajedničko poređenje i simulacija koriste theta=0, sa tolerancijom 2e-5 u FP32 i 2e-12 u FP64. Poseban BH scenario provjerava nenultu theta. Testovi koriste eksplicitne provjere aktivne i u Release buildu. CTest pokreće ovaj program i još dva kratka testa pokretanja: mjerenje sila i simulaciju sa `--algorithm all`. Dugi kombinatorni testovi i pojedinačni CLI testovi nisu dio ovog skupa; provjere ulaza u programu ostaju uključene.
+
+Performanse se porede odvojenom zajedničkom skriptom `run_cpu_benchmarks.py`, nad istim ulazima i brojem ponavljanja. Sedam scenarija provjerava ispravnost, a nije sedam različitih benchmarka. Kratki testovi nisu garancija dugoročne stabilnosti; jednostrani Barnes-Hut približni proračun ne nameće tačno očuvanje impulsa.
 
 ## Izvori i vlastiti doprinos
 
 Kod je implementiran za ovaj projekat. Fizički model i all-pairs princip odgovaraju pripremljenoj literaturi, posebno Nyland/Harris/Prins, *Fast N-Body Simulation with CUDA*, i Belleman i saradnici, *High performance direct gravitational N-body simulations ... II*. Njihovi GPU rezultati nisu predstavljeni kao naši. GPU tiling iz literature još nije implementiran; sadašnje blokiranje odnosi se na CPU keš i SoA podatke.
+
+Barnes-Hut koristi octree, masu/centar mase i kriterij otvaranja iz pripremljene literature (Barnesove *N-Body Methods* bilješke i Burtscher/Pingali, *An Efficient CUDA Implementation of the Tree-Based Barnes Hut n-Body Algorithm*). Ovdje su implementirane CPU verzije, bez preuzimanja njihovih GPU rezultata.

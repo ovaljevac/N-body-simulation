@@ -4,7 +4,7 @@ Projekat iz predmeta **Paralelni računarski sistemi**: simulacija gravitacionog
 
 Cilj je odvojeno ispitati **ubrzanje paralelizacijom istog algoritma** i **razlike između algoritama za isti fizički problem**. Uz vrijeme izvršavanja analiziraju se skalabilnost, troškovi pojedinih faza i tačnost aproksimacija.
 
-Implementiran je **prvi CPU dio za Direct N-body**: sekvencijalna osnova, blokovska verzija, SIMD, OpenMP i OpenMP + SIMD, uz FP32/FP64, leapfrog integraciju, numeričke testove i CSV benchmark. Sav kod, build konfiguracija, testovi, skripte i upute nalaze se u folderu [implementacija/](implementacija/). Rezultati mjerenja generišu se lokalno i nisu dio repozitorija. Barnes–Hut, FMM, CUDA i vizualizacija u nastavku dokumenta i dalje predstavljaju plan rada.
+Implementiran je **CPU dio za Direct N-body i Barnes–Hut**. Direct ima sekvencijalnu, blokovsku, SIMD, OpenMP i OpenMP + SIMD varijantu. Barnes–Hut ima osnovni rekurzivni, optimizovani iterativni i OpenMP obilazak zajedničkog octree stabla; gradnja stabla je sekvencijalna u sve tri verzije. Podržani su FP32/FP64, leapfrog, numerički testovi i CSV mjerenja. Sav kod, testovi, skripte i upute nalaze se u folderu [implementacija/](implementacija/). Rezultati se generišu lokalno. FMM, CUDA i vizualizacija ostaju plan rada.
 
 ## Dokumentacija
 
@@ -139,6 +139,8 @@ cd implementacija
 # Isti kod u FP64 preciznosti, bez template-a u implementaciji:
 ./scripts/build_windows.ps1 -Native -DoublePrecision
 ./build-double/nbody_bench.exe --n 128 --mode simulate --steps 100
+# Sve tri Barnes-Hut CPU verzije, sa istim parametrom aproksimacije:
+./build/nbody_bench.exe --algorithm barnes_hut --n 4096 --theta 0.5 --threads 4
 ```
 
 ```bash
