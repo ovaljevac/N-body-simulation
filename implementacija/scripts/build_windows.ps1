@@ -6,6 +6,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# Lokalni prenosivi alati su rezervna opcija; drugi racunar moze koristiti
+# instalirane alate sa PATH-a ili eksplicitno zadanu putanju ToolsBin.
 $workspaceTools = Join-Path $PSScriptRoot '../../../../tmp/toolchains'
 if (!$ToolsBin -and (Test-Path (Join-Path $workspaceTools 'w64devkit/bin/g++.exe'))) {
     $ToolsBin = (Resolve-Path (Join-Path $workspaceTools 'w64devkit/bin')).Path
