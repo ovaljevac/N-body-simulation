@@ -4,7 +4,7 @@ Projekat iz predmeta **Paralelni računarski sistemi**: simulacija gravitacionog
 
 Cilj je odvojeno ispitati **ubrzanje paralelizacijom istog algoritma** i **razlike između algoritama za isti fizički problem**. Uz vrijeme izvršavanja analiziraju se skalabilnost, troškovi pojedinih faza i tačnost aproksimacija.
 
-Implementiran je **CPU dio za Direct N-body i Barnes–Hut**. Direct ima sekvencijalnu, blokovsku, SIMD, OpenMP i OpenMP + SIMD varijantu. Barnes–Hut ima osnovni rekurzivni, optimizovani iterativni i OpenMP obilazak zajedničkog octree stabla; gradnja stabla je sekvencijalna u sve tri verzije. Podržani su FP32/FP64, leapfrog, numerički testovi i CSV mjerenja. Sav kod, testovi, skripte i upute nalaze se u folderu [implementacija/](implementacija/). Rezultati se generišu lokalno. FMM, CUDA i vizualizacija ostaju plan rada.
+Implementiran je **CPU dio za Direct N-body i Barnes–Hut**. Direct ima sekvencijalnu, blokovsku, SIMD, OpenMP i OpenMP + SIMD varijantu. Barnes–Hut ima osnovni rekurzivni, optimizovani iterativni i OpenMP obilazak zajedničkog octree stabla; gradnja stabla je sekvencijalna u sve tri verzije. Podržani su FP32/FP64, leapfrog, numerički testovi i CSV mjerenja. Zaseban Windows modul [vizualizacija/](implementacija/vizualizacija/) prikazuje kretanje tijela u ravni XY i koristi isti numerički kod. Sav kod i upute su u [implementacija/](implementacija/), a rezultati se generišu lokalno. FMM i CUDA ostaju plan rada.
 
 ## Dokumentacija
 
@@ -141,6 +141,8 @@ cd implementacija
 ./build-double/nbody_bench.exe --n 128 --mode simulate --steps 100
 # Sve tri Barnes-Hut CPU verzije, sa istim parametrom aproksimacije:
 ./build/nbody_bench.exe --algorithm barnes_hut --n 4096 --theta 0.5 --threads 4
+# Zaseban interaktivni 2D prozor (Windows):
+./build/nbody_viewer.exe
 ```
 
 ```bash

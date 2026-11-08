@@ -22,13 +22,15 @@ Ovih pet Direct varijanti podržavaju `float` i `double`, isti 3D model i iste u
 | `bh_optimized` | Iterativni obilazak bez steka, ciljevi prostornim redoslijedom | 1 |
 | `bh_openmp` | Isti iterativni obilazak, ciljevi podijeljeni OpenMP nitima | Zadani P |
 
-Barnes-Hut koristi FP32/FP64 i isti integrator. FMM, GPU i prikaz nisu implementirani.
+Barnes-Hut koristi FP32/FP64 i isti integrator. Zaseban modul `vizualizacija/` daje interaktivni 2D prikaz na Windowsu. FMM i GPU nisu implementirani.
 
 `src/direct.cpp` sadrži tri direktno čitljive funkcije: `sequential`, `blocked` i `openmp`. `src/simd.cpp` sadrži `simd` i `openmp_simd`. Slične petlje su namjerno napisane zasebno da se razlike mogu pokazati i objasniti.
 
 `src/nbody.h` sadrži strukture i deklaracije, a `src/nbody.cpp` inicijalizaciju, provjeru ulaza, izbor funkcije, referentni proračun i integrator. `main.cpp` vodi benchmark, `tests.cpp` provjerava numeriku, a tri skripte služe buildu i obradi rezultata. Nema template kernela, praznih omotača ni unaprijed dodanih foldera za buduće algoritme.
 
 `src/barnes_hut.cpp` sadrži gradnju octree stabla i tri izvedbe obilaska. Interni čvorovi i funkcije ostaju u tom jednom izvornom fajlu. Svi testovi su objedinjeni u `tests.cpp`, bez posebnog Barnes-Hut testnog programa.
+
+`vizualizacija/main.cpp` sadrži samo prozor, kontrole i crtanje. Njegov `CMakeLists.txt` pravi zasebni `nbody_viewer.exe`, povezan sa postojećim `nbody_core`. Benchmark i testovi ne zavise od prozora.
 
 ## Fizički model i podaci
 
@@ -119,6 +121,27 @@ Iz foldera `implementacija/` na Windowsu:
 Preciznost se bira pri build-u: `Real` je podrazumijevano `float`, a opcija `NBODY_DOUBLE=ON` bira `double`. Tako nema template-a kroz algoritme ni odabira preciznosti tokom izvršavanja. Stara CLI opcija `--precision` je uklonjena. Za FP64 na Linuxu koristiti `cmake -S . -B build-double -DCMAKE_BUILD_TYPE=Release -DNBODY_DOUBLE=ON`, zatim build i CTest nad tim folderom.
 
 Windows skripta koristi alate sa PATH-a ili prenosive alate iz radnog prostora, ako su prisutni. Na drugom računaru može se zadati `-ToolsBin C:/putanja/w64devkit/bin`, uz CMake na PATH-u. Alati nisu dio izvornog repozitorija i skripta ništa ne preuzima niti sistemski instalira.
+
+## Interaktivni 2D prikaz
+
+Na Windowsu build skripta pravi i zaseban `build/nbody_viewer.exe`. Prije ponovnog kompajliranja zatvoriti otvoreni prozor simulatora. Pokretanje iz foldera `implementacija/`:
+
+```powershell
+./scripts/build_windows.ps1 -Native
+./build/nbody_viewer.exe
+```
+
+Prozor omogućava izbor broja tijela (1..10000), seeda, početnog rasporeda, svih osam CPU izvedbi, broja niti i BH theta parametra. Broj niti je aktivan samo za paralelne izvedbe, a theta samo za Barnes-Hut. Dugme Novi bira nasumičan seed; isti seed i postavke uvijek vraćaju isti početni raspored.
+
+Pri otvaranju prozor očita broj fizičkih jezgri preko Windows API-ja i broj logičkih procesora dostupnih OpenMP-u. Unos niti ograničen je na taj dostupni broj. Status prikazuje veličinu stvarno pokrenutog OpenMP tima, provjerenu pri resetu, odnosno jednu nit za sekvencijalne izvedbe. Niti se ne vežu za konkretne jezgre; njihov raspored određuje operativni sistem. Ovo nije mjera procenta opterećenja CPU-a. Ako očitavanje fizičkih jezgri ne uspije, prikazuje se znak `?`.
+
+Pokreni nastavlja pauzirano stanje. Ako su postavke promijenjene, prvo priprema novo početno stanje. Pauziraj zaustavlja korake, Resetuj vraća početno stanje sa trenutnim postavkama, a Uklopi prikaz centrira kameru. Zum točkom miša mijenja samo pogled. Postavke se tokom rada zaključavaju; za promjenu prvo pauzirati.
+
+Početni položaji dolaze iz istog generatora kao u benchmarku, uz z=0 i početne brzine nula. Ovo je ravanska Newtonova simulacija: isti 3D gravitacioni zakon djeluje u ravni XY, bez uvođenja logaritamskog 2D potencijala. Prozor poziva postojeće `accelerations()` i `step()`; ne kopira algoritme. Četiri fiksna koraka dt=0.002 izvode se pri osvježavanju. Sporiji računar usporava prikaz umjesto da povećava dt. Za jedno tijelo, uz nultu početnu brzinu i bez drugih tijela, položaj ostaje isti.
+
+Prikaz koristi ugrađeni Windows GDI, bez dodatnih grafičkih biblioteka i bez Python zavisnosti. Sve se nalazi u modulu `vizualizacija/`. CMake opcija `-DNBODY_VIEWER=OFF` isključuje taj modul i ostavlja numerički dio, testove i benchmark. FP64 build zasebno pravi `build-double/nbody_viewer.exe`.
+
+Vrijeme u prozoru označava posljednji prosjek računanja koraka, bez crtanja. To je informativna vrijednost, ne zamjena za benchmark sa zagrijavanjem, ponavljanjima i statistikom. Početna stanja u prozoru su ravanska, dok postojeća benchmark skripta zadržava 3D ulaze. Postojećih sedam testnih scenarija ostaje uključeno: izgled animacije ne dokazuje numeričku tačnost.
 
 ## Šta benchmark mjeri
 

@@ -1,0 +1,5 @@
+add_executable(nbody_viewer WIN32 main.cpp)
+target_link_libraries(nbody_viewer PRIVATE nbody_core user32 gdi32)
+target_compile_definitions(nbody_viewer PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(nbody_viewer PRIVATE -Wall -Wextra -Wpedantic)
+set_target_properties(nbody_viewer PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
