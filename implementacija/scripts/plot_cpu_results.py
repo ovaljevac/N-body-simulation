@@ -5,6 +5,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('summary', type=Path)
@@ -30,15 +31,24 @@ for ax, distribution in zip(axes, ['uniform', 'clustered']):
         threads = max(int(r['threads']) for r in available)
         series = sorted((r for r in available if int(r['threads']) == threads), key=lambda r: int(r['n']))
         ax.plot([int(r['n']) for r in series], [1000 * float(r['median_seconds']) for r in series],
-                marker='o', color=colors[backend_names.index(backend) % len(colors)],
-                linestyle=styles[theta_values.index(theta) % len(styles)] if theta else '-',
+                marker='s' if backend == 'blocked' else 'o', markersize=4,
+                color=colors[backend_names.index(backend) % len(colors)],
+                linestyle=styles[theta_values.index(theta) % len(styles)] if theta else ('--' if backend == 'blocked' else '-'),
                 label=f'{backend}' + (f' theta={float(theta):g}' if theta else '')
                 + f' ({threads} {"thread" if threads == 1 else "threads"})')
+        ax.fill_between([int(r['n']) for r in series],
+                        [1000 * float(r['min_seconds']) for r in series],
+                        [1000 * float(r['max_seconds']) for r in series],
+                        color=colors[backend_names.index(backend) % len(colors)], alpha=.10)
     ax.set(xlabel='Number of bodies N', ylabel='Solver time including tree build (ms)',
            title=distribution.capitalize(), xscale='log', yscale='log')
     ax.grid(alpha=.25)
+    ax.set_xticks(sorted({int(r['n']) for r in rows}))
+    ax.xaxis.set_major_formatter(ScalarFormatter())
+    ax.minorticks_off()
+    ax.tick_params(axis='x', labelrotation=30)
 handles, labels = axes[0].get_legend_handles_labels()
 fig.legend(handles, labels, loc='outside lower center', ncol=3, fontsize=8)
-fig.suptitle('N-body CPU: median of measured repetitions')
+fig.suptitle('N-body CPU: median per force evaluation\nShaded bands: measured minimum–maximum; both axes logarithmic', fontsize=12)
 fig.savefig(args.summary.with_name('cpu_times.png'), dpi=180)
 fig.savefig(args.summary.with_name('cpu_times.svg'))

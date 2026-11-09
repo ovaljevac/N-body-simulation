@@ -162,6 +162,19 @@ python scripts/plot_cpu_results.py results/local/summary.csv
 
 Prva skripta koristi samo Python standardnu biblioteku i čuva `raw.csv`, `summary.csv` i `metadata.json` sa tačnim komandama i podacima o sistemu. Druga zahtijeva Matplotlib i pravi PNG/SVG grafikon. Namjerno se ne pokreće N=100.000 i stotinu koraka kao podrazumijevani test.
 
+### Proširena mjerenja i izvještaj za odbranu
+
+Sljedeće komande pokretati redom, bez istovremenog izvršavanja drugih benchmarka:
+
+```powershell
+python scripts/run_cpu_benchmarks.py --exe build/nbody_bench.exe --algorithm all --sizes 512 1024 2048 4096 8192 16384 --threads 1 2 4 --repeats 7 --steps 10 --out results/odbrana_2026-11-08/scaling
+python scripts/run_cpu_benchmarks.py --exe build/nbody_bench.exe --algorithm barnes_hut --sizes 4096 --theta 0.2 0.5 0.8 --threads 1 4 --repeats 7 --steps 10 --max-relative-error 0.12 --out results/odbrana_2026-11-08/theta
+python scripts/plot_cpu_results.py results/odbrana_2026-11-08/scaling/summary.csv
+python scripts/defence_report.py results/odbrana_2026-11-08
+```
+
+Graf vremena koristi šest stvarno izmjerenih veličina N i sjenčenje minimum–maksimum; obje ose su logaritamske. `defence_report.py` dodatno pravi grafik skaliranja nitima na najvećem N, odnos vremena i greške za theta seriju te `izvjestaj.md` i samostalan `izvjestaj.html` sa ugrađenim slikama. Izvještaj opisuje ovu FP32 seriju sa navedenim parametrima; za drugačiji eksperiment treba prilagoditi i tekst metodologije. Rezultati ostaju u lokalnom ignorisanom folderu `results/`.
+
 `speedup_vs_sequential` poredi sa osnovnom verzijom istog algoritma (`sequential` ili `bh_sequential`). `speedup_vs_matching_serial` za OpenMP koristi `sequential`, za OpenMP+SIMD `simd`, a za BH OpenMP `bh_optimized` pri istom theta. CPU efikasnost je taj drugi odnos podijeljen stvarnim brojem niti. BH ukupno ubrzanje uključuje i sekvencijalnu gradnju. Ako je zadan `--algorithm all`, `speedup_vs_direct` dodatno poredi sa Direct sekvencijalnom verzijom; BH pri tome ima izmjerenu aproksimacijsku grešku. Stari lokalni rezultati ostaju odvojeno.
 
 ## Provjera ispravnosti
