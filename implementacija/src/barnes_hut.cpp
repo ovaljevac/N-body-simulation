@@ -201,8 +201,8 @@ void iterative_force(const Tree& tree, const Bodies& bodies, std::size_t target,
 
 } // namespace
 
-// Svaki poziv ponovo gradi stablo trenutnih polozaja. Tri izvedbe dijele
-// tu gradnju i kriterij otvaranja; razlikuju se obilaskom i raspodjelom ciljeva.
+// Svaki poziv ponovo gradi stablo trenutnih polozaja. Obje izvedbe dijele
+// gradnju i kriterij otvaranja, a razlikuju se načinom obilaska.
 void barnes_hut(const Bodies& bodies, Acceleration& acceleration, const Config& config,
                 Backend backend, SolverTiming* timing) {
     const auto start = std::chrono::steady_clock::now();
@@ -216,22 +216,10 @@ void barnes_hut(const Bodies& bodies, Acceleration& acceleration, const Config& 
             acceleration.y[i] = ay;
             acceleration.z[i] = az;
         }
-    } else if (backend == Backend::bh_optimized) {
+    } else {
         // Bliski ciljevi obicno citaju slicne cvorove, sto pomaze kesu.
         // Upis preko izvornog i zadrzava rezultat u istom poretku kao Bodies.
         for (auto i : tree.order) {
-            Real ax = 0, ay = 0, az = 0;
-            iterative_force(tree, bodies, i, config, ax, ay, az);
-            acceleration.x[i] = ax;
-            acceleration.y[i] = ay;
-            acceleration.z[i] = az;
-        }
-    } else {
-        // Stablo je već završeno i sve niti ga samo čitaju. Prostorno bliski
-        // ciljevi dijele se statički, a svaka nit upisuje svoj izlazni element.
-        #pragma omp parallel for schedule(static)
-        for (std::size_t k = 0; k < tree.order.size(); ++k) {
-            const auto i = tree.order[k];
             Real ax = 0, ay = 0, az = 0;
             iterative_force(tree, bodies, i, config, ax, ay, az);
             acceleration.x[i] = ax;

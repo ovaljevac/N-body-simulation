@@ -1,10 +1,10 @@
 # Paralelna N-body simulacija gravitacionog djelovanja
 
-Projekat iz predmeta **Paralelni računarski sistemi**: simulacija gravitacionog djelovanja više tijela pomoću algoritama **Direct N-body**, **Barnes–Hut** i **Fast Multipole Method (FMM)**. Za svaki algoritam planirane su sekvencijalna i optimizovana CPU verzija, višejezgrena CPU verzija pomoću **OpenMP-a** te GPU verzija pomoću **CUDA-e**, na grafičkoj kartici **NVIDIA GeForce RTX 3050**.
+Projekat iz predmeta **Paralelni računarski sistemi**: simulacija gravitacionog djelovanja više tijela pomoću algoritama **Direct N-body**, **Barnes–Hut** i **Fast Multipole Method (FMM)**. Za svaki algoritam planirane su sekvencijalna i optimizovana CPU verzija i GPU verzija pomoću **CUDA-e**, na grafičkoj kartici **NVIDIA GeForce RTX 3050**.
 
 Cilj je odvojeno ispitati **ubrzanje paralelizacijom istog algoritma** i **razlike između algoritama za isti fizički problem**. Uz vrijeme izvršavanja analiziraju se skalabilnost, troškovi pojedinih faza i tačnost aproksimacija.
 
-Implementiran je **CPU dio za Direct N-body i Barnes–Hut**. Direct ima sekvencijalnu, blokovsku, SIMD, OpenMP i OpenMP + SIMD varijantu. Barnes–Hut ima osnovni rekurzivni, optimizovani iterativni i OpenMP obilazak zajedničkog octree stabla; gradnja stabla je sekvencijalna u sve tri verzije. Podržani su FP32/FP64, leapfrog, numerički testovi i CSV mjerenja. Zaseban Windows modul [vizualizacija/](implementacija/vizualizacija/) prikazuje kretanje tijela u ravni XY i koristi isti numerički kod. Sav kod i upute su u [implementacija/](implementacija/), a rezultati se generišu lokalno. FMM i CUDA ostaju plan rada.
+Implementiran je **CPU dio za Direct N-body i Barnes–Hut**. Direct ima sekvencijalnu, blokovsku i SIMD izvedbu. Barnes–Hut ima osnovni rekurzivni i optimizovani iterativni obilazak zajedničkog octree stabla. Svih pet izvedbi rade na jednoj niti. Podržani su FP32/FP64, leapfrog, numerički testovi i CSV mjerenja. Zaseban Windows modul [vizualizacija/](implementacija/vizualizacija/) prikazuje kretanje tijela u ravni XY i koristi isti numerički kod. Sav kod i upute su u [implementacija/](implementacija/), a rezultati se generišu lokalno. FMM i CUDA ostaju plan rada.
 
 ## Dokumentacija
 
@@ -31,19 +31,19 @@ Literatura opisuje različite modele i implementacije. Preuzete formule i tehnik
 
 Za sva tri algoritma planirane su sljedeće varijante:
 
-| Algoritam | Osnovni sekvencijalni CPU | Optimizovani sekvencijalni CPU | Paralelni CPU | GPU |
-| --- | --- | --- | --- | --- |
-| Direct N-body | C++ | Blokiranje i vektorizacija | OpenMP, zatim OpenMP + SIMD | CUDA, osnovni i tiled kernel |
-| Barnes–Hut | C++ i osnovni obilazak stabla | Ravno stablo, iterativni obilazak i bolja lokalnost | OpenMP računanje sila | Hibridni CPU/CUDA pristup |
-| FMM | C++ i sve osnovne faze FMM-a | Ponovna upotreba operatora i grupisanje računanja | OpenMP po ćelijama i nivoima stabla | Hibridni CPU/CUDA pristup |
+| Algoritam | Osnovni sekvencijalni CPU | Optimizovani sekvencijalni CPU | GPU |
+| --- | --- | --- | --- |
+| Direct N-body | C++ | Blokiranje i vektorizacija | CUDA, osnovni i tiled kernel |
+| Barnes–Hut | C++ i osnovni obilazak stabla | Ravno stablo, iterativni obilazak i bolja lokalnost | Hibridni CPU/CUDA pristup |
+| FMM | C++ i sve osnovne faze FMM-a | Ponovna upotreba operatora i grupisanje računanja | Hibridni CPU/CUDA pristup |
 
-Time se dobija **12 osnovnih varijanti**, uz dodatno poređenje osnovnog i optimizovanog CUDA kernela za Direct N-body. Optimizacije ne mijenjaju fizički model ni parametre tačnosti algoritma.
+Optimizacije ne mijenjaju fizički model ni parametre tačnosti algoritma.
 
 ## Početni plan implementacije
 
 ### 1. Zajednički simulator i podaci
 
-Planirani alati su **C++20**, **CMake**, **OpenMP** i **CUDA Toolkit** kompatibilan s RTX 3050 i izabranim kompajlerom. Python i Matplotlib koriste se za analizu CSV rezultata i izradu grafikona.
+Planirani alati su **C++20**, **CMake** i **CUDA Toolkit** kompatibilan s RTX 3050 i izabranim kompajlerom. Python i Matplotlib koriste se za analizu CSV rezultata i izradu grafikona.
 
 Simulacija je planirana u **3D prostoru**, s octree stablom za hijerarhijske algoritme. Jednostavan 2D prikaz projekcije tijela služi za demonstraciju. Svako tijelo ima masu, položaj, brzinu i ubrzanje. Podaci se čuvaju u **SoA** rasporedu: odvojeni nizovi za komponente položaja, brzine i ubrzanja te za mase.
 
@@ -55,7 +55,7 @@ a_i = G * sum(j != i) [m_j * (r_j - r_i) / (|r_j - r_i|² + epsilon²)^(3/2)]
 
 Parametar `epsilon` ograničava sile pri vrlo malim udaljenostima. Isti `epsilon`, vremenski korak `dt` i početno stanje koriste se u svim verzijama. **Multipolni razvoj FMM-a mora odgovarati ovom omekšanom jezgru**; klasične formule za neomekšani potencijal `1/r` zahtijevaju prilagodbu. Potencijal `log(r)` iz nekih 2D FMM primjera predstavlja drugi fizički model.
 
-Položaji i brzine ažuriraju se **Leapfrog kick–drift–kick** integracijom. Svi izračuni sile u jednoj fazi koriste isto stanje položaja. Računanje sila završava prije ažuriranja podataka koje će čitati druga tijela ili niti.
+Položaji i brzine ažuriraju se **Leapfrog kick–drift–kick** integracijom. Svi izračuni sile u jednoj fazi koriste isto stanje položaja. Računanje sila završava prije ažuriranja podataka koje će čitati druga tijela.
 
 Ulazni skupovi generišu se s fiksnim seed-om: ravnomjerno raspoređena tijela i tijela grupisana u više prostornih klastera. Rezultati mjerenja izvoze se u CSV. Vizualizacija se izvršava odvojeno od mjerenja računskog dijela.
 
@@ -63,7 +63,7 @@ Ulazni skupovi generišu se s fiksnim seed-om: ravnomjerno raspoređena tijela i
 
 Prvo se implementira sekvencijalno sabiranje svih djelovanja. Vanjska petlja obrađuje ciljna tijela, a unutrašnja sva izvorna tijela. Ubrzanje svakog ciljnog tijela ima zaseban akumulator. Ova implementacija služi kao referenca za provjeru ostalih verzija.
 
-Zatim se uvode blokiranje podataka i SIMD, pa OpenMP raspodjela ciljnih tijela između niti. CUDA verzija prvo koristi jednostavan kernel s jednom niti po ciljnom tijelu. Optimizovani kernel učitava blokove izvornih tijela u **shared memory**, tako da podatke ponovo koristi više niti. Svi članovi bloka moraju pravilno učestvovati u sinhronizaciji, uključujući zadnji nepotpuni blok.
+Direct izvedbe koriste i blokiranje podataka i SIMD. CUDA verzija prvo koristi jednostavan kernel s jednom niti po ciljnom tijelu. Optimizovani kernel učitava blokove izvornih tijela u **shared memory**, tako da podatke ponovo koristi više niti. Svi članovi bloka moraju pravilno učestvovati u sinhronizaciji, uključujući zadnji nepotpuni blok.
 
 ### 3. Barnes–Hut
 
@@ -71,7 +71,7 @@ Implementiraju se određivanje granica prostora, izgradnja octree stabla, račun
 
 Osnovna sekvencijalna verzija zatim se optimizuje predstavljanjem čvorova u nizovima, indeksima umjesto pokazivača, iterativnim obilaskom i prostornim sortiranjem tijela. List može sadržavati više tijela; maksimalna dubina stabla sprječava beskonačnu podjelu pri jednakim ili veoma bliskim položajima.
 
-OpenMP verzija paralelizuje računanje sila nad izgrađenim stablom, uz poređenje `static`, `dynamic` i `guided` raspoređivanja. Početna CUDA verzija koristi stablo pripremljeno na CPU-u i obilazak na GPU-u. Posebno se mjere izgradnja stabla i prijenos podataka.
+Početna CUDA verzija koristi stablo pripremljeno na CPU-u i obilazak na GPU-u. Posebno se mjere izgradnja stabla i prijenos podataka.
 
 ### 4. Fast Multipole Method
 
@@ -86,7 +86,7 @@ FMM koristi prostorno stablo i koeficijente razvoja za odabrano gravitaciono jez
 
 Prvo se provjeravaju pojedinačne faze, zatim kompletno računanje sila. Eksperimenti mijenjaju red razvoja `p` i kapacitet lista, uz praćenje greške i vremena.
 
-Optimizovana CPU verzija ponovo koristi operatore koji zavise samo od relativnog rasporeda ćelija i zajedničkih parametara. OpenMP obrađuje nezavisne ciljne ćelije, uz sinhronizaciju između zavisnih nivoa i faza. Više niti ne smije nekontrolisano ažurirati iste koeficijente.
+Optimizovana CPU verzija ponovo koristi operatore koji zavise samo od relativnog rasporeda ćelija i zajedničkih parametara.
 
 Za početnu hibridnu CUDA verziju CPU priprema stablo, liste interakcija i operatore, a GPU izvršava računski zahtjevne **P2P i M2L** faze. Ostale faze prenose se na GPU nakon provjere ispravnosti i profilisanja. U rezultatima se navodi tačna podjela rada između CPU-a i GPU-a.
 
@@ -96,7 +96,7 @@ Za početnu hibridnu CUDA verziju CPU priprema stablo, liste interakcija i opera
 2. **Integracija.** Provjeriti kretanje bez sile i jednostavnu orbitu dva tijela. Pratiti energiju, ukupni impuls i uticaj smanjenja `dt`; numeričko očuvanje ocjenjuje se tolerancijom i promjenom kroz vrijeme.
 3. **Sekvencijalni Barnes–Hut.** Provjeriti masu i centar mase stabla te ubrzanja u odnosu na Direct referencu. Smanjivanje `theta` treba u pravilu smanjivati aproksimacijsku grešku.
 4. **Sekvencijalni FMM.** Provjeriti prenos razvoja i liste interakcija: svako djelovanje mora biti obuhvaćeno jednom kroz blisku ili udaljenu obradu. Ispitati uticaj povećanja `p` na grešku i vrijeme.
-5. **CPU optimizacije i OpenMP.** Svaka verzija poredi se sa sekvencijalnom verzijom istog algoritma, s istim parametrima i preciznošću. Greške zaokruživanja zbog drugačijeg redoslijeda sabiranja ocjenjuju se dokumentovanim tolerancijama.
+5. **CPU optimizacije.** Svaka verzija poredi se sa sekvencijalnom verzijom istog algoritma, s istim parametrima i preciznošću. Greške zaokruživanja zbog drugačijeg redoslijeda sabiranja ocjenjuju se dokumentovanim tolerancijama.
 6. **CUDA.** Provjeriti GPU rezultate i sinhronizaciju, zatim odvojeno mjeriti kernele, prijenose i cijeli korak. Testirati i broj tijela koji nije djeljiv veličinom bloka.
 7. **Konačni eksperimenti.** Tek nakon provjera porediti performanse i pripremiti tabele, grafikone i izvještaj.
 
@@ -107,7 +107,6 @@ Tačnost sila provjerava se na **istom zamrznutom stanju tijela**, prije integra
 | Parametar | Početni skup vrijednosti |
 | --- | --- |
 | Broj tijela `N` | 1.000, 5.000, 10.000, 50.000 i 100.000; veći skupovi prema raspoloživom vremenu i memoriji |
-| Broj CPU niti | 1, 2, 4, 8, do raspoloživih hardverskih niti |
 | Raspored tijela | Ravnomjeran i klasterisan |
 | Barnes–Hut `theta` | 0,3; 0,5; 0,7 |
 | FMM red razvoja `p` | Početno 2, 4, 6; izbor se potvrđuje prema konkretnoj formulaciji i grešci |
@@ -120,38 +119,37 @@ Skuplji Direct eksperimenti koriste manji podskup vrijednosti `N`, uz jasno nazn
 Mjeri se ukupno vrijeme koraka, a za hijerarhijske algoritme posebno izgradnja stabla, priprema interakcija, računanje sila i integracija. GPU vremena kernela mjere se CUDA događajima, a ukupno vrijeme zidnim satom uz sinhronizaciju. Jednokratna inicijalizacija uređaja prikazuje se odvojeno. Redovni prijenosi podataka ulaze u ukupno vrijeme hibridne verzije.
 
 - **Paralelno ubrzanje:** `S = T_seq / T_parallel`, za isti algoritam, parametre i preciznost.
-- **CPU efikasnost:** `E = S / P`, gdje je `P` broj niti. Ova formula se ne primjenjuje koristeći broj CUDA jezgri kao `P`.
 - **Poređenje algoritama:** vremena Direct, Barnes–Hut i FMM verzija pri istom načinu izvršavanja; aproksimativne metode dodatno se porede pri sličnom nivou greške.
-- **Skalabilnost:** vrijeme u zavisnosti od `N` i strong scaling pri fiksnom `N` i promjeni broja CPU niti.
+- **Skalabilnost:** vrijeme u zavisnosti od `N`.
 - **Uticaj optimizacija:** osnovna naspram optimizovane verzije, uz isti matematički izračun i kriterije tačnosti.
 
-Za svako mjerenje bilježe se CPU model, RAM, tačna varijanta RTX 3050 i količina VRAM-a, operativni sistem, kompajler i njegove opcije, verzije CUDA-e i drajvera, broj niti, seed i svi simulacijski parametri. Sekvencijalna CPU osnova je optimizovan Release build s jednom niti; postavke automatske vektorizacije evidentiraju se za svaku varijantu.
+Za svako mjerenje bilježe se CPU model, RAM, tačna varijanta RTX 3050 i količina VRAM-a, operativni sistem, kompajler i njegove opcije, verzije CUDA-e i drajvera, seed i svi simulacijski parametri. Sekvencijalna CPU osnova je optimizovan Release build s jednom niti; postavke automatske vektorizacije evidentiraju se za svaku varijantu.
 
 ## Pokretanje implementiranog CPU dijela
 
-Potrebni su CMake 3.20+, C++20 GCC/Clang i OpenMP. Na Windowsu je provjeren GCC iz prenosivog w64devkit-a; klasični MSVC `/openmp` nije podržan za ovaj SIMD eksperiment.
+Potrebni su CMake 3.20+, C++20 GCC ili Clang s podrškom za `-fopenmp-simd`. Na Windowsu je provjeren GCC iz prenosivog w64devkit-a.
 
 ```powershell
 # Windows: koristi GCC/CMake sa PATH-a ili lokalne prenosive alate ako postoje.
 cd implementacija
 ./scripts/build_windows.ps1 -Native
-./build/nbody_bench.exe --n 1024 --threads 4 --backend all --output results/local/raw.csv
+./build/nbody_bench.exe --n 1024 --backend all --output results/local/raw.csv
 # Isti kod u FP64 preciznosti, bez template-a u implementaciji:
 ./scripts/build_windows.ps1 -Native -DoublePrecision
 ./build-double/nbody_bench.exe --n 128 --mode simulate --steps 100
-# Sve tri Barnes-Hut CPU verzije, sa istim parametrom aproksimacije:
-./build/nbody_bench.exe --algorithm barnes_hut --n 4096 --theta 0.5 --threads 4
+# Obje Barnes-Hut CPU verzije, sa istim parametrom aproksimacije:
+./build/nbody_bench.exe --algorithm barnes_hut --n 4096 --theta 0.5
 # Zaseban interaktivni 2D prozor (Windows):
 ./build/nbody_viewer.exe
 ```
 
 ```bash
-# Linux / GCC, ili Clang uz dostupan libomp
+# Linux / GCC ili Clang
 cd implementacija
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-./build/nbody_bench --n 1024 --threads 4 --backend all
+./build/nbody_bench --n 1024 --backend all
 ```
 
 Python skripte za ponavljanja, statistiku i grafikone opisane su u [uputama implementacije](implementacija/README.md). CSV datoteke, grafikoni i podaci o lokalnom hardveru spremaju se u ignorisani folder `implementacija/results/`.
@@ -170,7 +168,6 @@ Python skripte za ponavljanja, statistiku i grafikone opisane su u [uputama impl
 | **Softening / `epsilon`** | Omekšavanje gravitacionog jezgra radi ograničavanja sila na malim udaljenostima. |
 | **Leapfrog / `dt`** | Metoda vremenske integracije; `dt` je vremenski korak. |
 | **SoA** | Structure of Arrays: odvojeni nizovi po fizičkoj veličini. |
-| **OpenMP** | CPU paralelizacija pomoću više niti i programskih direktiva. |
 | **SIMD** | Jedna procesorska instrukcija obrađuje više vrijednosti. |
 | **CUDA kernel** | Funkcija koja se paralelno izvršava na NVIDIA GPU-u. |
 | **Tiling / shared memory** | Obrada u blokovima uz ponovno korištenje podataka iz memorije dijeljene unutar GPU bloka. |

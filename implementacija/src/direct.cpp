@@ -64,28 +64,4 @@ void blocked(const Bodies& bodies, Acceleration& acceleration, const Config& con
     }
 }
 
-// OpenMP verzija se od osnovne razlikuje raspodjelom ciljnih tijela između niti.
-// Svaka nit upisuje drugi izlazni element, pa nisu potrebni atomici ni zaključavanje.
-void openmp(const Bodies& bodies, Acceleration& acceleration, const Config& config) {
-    const Real epsilon2 = config.epsilon * config.epsilon;
-    #pragma omp parallel for schedule(static)
-    for (std::size_t i = 0; i < bodies.size(); ++i) {
-        Real ax = 0, ay = 0, az = 0;
-        for (std::size_t j = 0; j < bodies.size(); ++j) {
-            if (i == j) continue;
-            const Real dx = bodies.x[j] - bodies.x[i];
-            const Real dy = bodies.y[j] - bodies.y[i];
-            const Real dz = bodies.z[j] - bodies.z[i];
-            const Real inverse = Real(1) / std::sqrt(dx * dx + dy * dy + dz * dz + epsilon2);
-            const Real factor = config.gravity * bodies.mass[j] * inverse * inverse * inverse;
-            ax += dx * factor;
-            ay += dy * factor;
-            az += dz * factor;
-        }
-        acceleration.x[i] = ax;
-        acceleration.y[i] = ay;
-        acceleration.z[i] = az;
-    }
-}
-
 } // namespace nbody

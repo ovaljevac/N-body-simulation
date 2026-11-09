@@ -1,7 +1,6 @@
 #include "../src/nbody.h"
 #include <windows.h>
 #include <windowsx.h>
-#include <omp.h>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -11,18 +10,18 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace {
 constexpr double dt = 0.002;
 constexpr int steps_per_frame = 4;
 constexpr int panel_width = 300;
-enum Control { count_id = 101, seed_id, distribution_id, backend_id, threads_id,
+enum Control { count_id = 101, seed_id, distribution_id, backend_id,
     theta_id, start_id, reset_id, fit_id, random_id, status_id };
 constexpr const wchar_t* backend_labels[] = {
     L"Direct - osnovna", L"Direct - blokovska", L"Direct - SIMD",
-    L"Direct - OpenMP", L"Direct - OpenMP + SIMD", L"Barnes-Hut - osnovna",
-    L"Barnes-Hut - optimizovana", L"Barnes-Hut - OpenMP"};
+    L"Barnes-Hut - osnovna", L"Barnes-Hut - optimizovana"};
+static_assert(std::size(backend_labels) == nbody::backends.size());
+constexpr auto default_backend = nbody::Backend::bh_optimized;
 
 // Prozor posjeduje samo svoje stanje i kontrole. Fizika, octree i integrator
 // ostaju u nbody_core, istom kodu koji koriste benchmark i numericki testovi.
@@ -34,31 +33,11 @@ struct App {
     nbody::Bodies bodies;
     nbody::Acceleration acceleration;
     nbody::Config config;
-    nbody::Backend backend = nbody::Backend::bh_openmp;
+    nbody::Backend backend = default_backend;
     std::uint64_t steps = 0;
     double simulation_time = 0, compute_ms = 0;
-    int physical_cores = 0, logical_processors = std::max(1, omp_get_num_procs());
-    int threads = 1;
     bool running = false, dirty = false, clustered = false;
 };
-
-// Windows vraca jedan zapis za svaku fizicku jezgru. Ovo citamo samo pri
-// otvaranju prozora; OpenMP zasebno daje broj dostupnih logickih procesora.
-int physical_core_count() {
-    DWORD bytes = 0;
-    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bytes);
-    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0) return 0;
-    std::vector<unsigned char> buffer(bytes);
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
-            reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &bytes)) return 0;
-    int cores = 0;
-    for (DWORD offset = 0; offset < bytes;) {
-        const auto* entry = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buffer.data() + offset);
-        ++cores;
-        offset += entry->Size;
-    }
-    return cores;
-}
 
 int px(const App& app, int value) { return int(std::lround(value * app.dpi_scale)); }
 HWND control(const App& app, int id) { return GetDlgItem(app.window, id); }
@@ -89,7 +68,6 @@ void update_controls(const App& app) {
     for (int id : {count_id, seed_id, distribution_id, backend_id, random_id})
         EnableWindow(control(app, id), !app.running);
     const auto backend = selected_backend(app);
-    EnableWindow(control(app, threads_id), !app.running && nbody::parallel(backend));
     EnableWindow(control(app, theta_id), !app.running && nbody::barnes_hut_backend(backend));
     SetWindowTextW(control(app, start_id), app.running ? L"Pauziraj" : L"Pokreni");
 }
@@ -97,7 +75,7 @@ void update_controls(const App& app) {
 void update_status(const App& app) {
     std::wostringstream status;
     status << (app.running ? L"Pokrenuto" : app.dirty ? L"Postavke cekaju primjenu" : L"Pauzirano")
-           << L"\nTijela: " << app.bodies.size() << L"   Niti: " << app.threads << L" / " << app.logical_processors
+           << L"\nTijela: " << app.bodies.size()
            << L"\nKoraci: " << app.steps << L"   t: " << std::fixed << std::setprecision(3) << app.simulation_time
            << L"\nProracun: " << std::setprecision(2) << app.compute_ms << L" ms/korak";
     SetWindowTextW(control(app, status_id), status.str().c_str());
@@ -120,9 +98,6 @@ void reset_simulation(App& app) {
     const auto seed = integer(control(app, seed_id));
     if (count == 0 || count > 10000) throw std::invalid_argument("Broj tijela za prikaz mora biti 1..10000.");
     const auto backend = selected_backend(app);
-    const auto threads = nbody::parallel(backend) ? integer(control(app, threads_id)) : 1;
-    if (threads == 0 || threads > std::uint64_t(app.logical_processors))
-        throw std::invalid_argument("Broj niti mora biti izmedju 1 i broja dostupnih logickih procesora.");
     auto config = app.config;
     if (nbody::barnes_hut_backend(backend)) {
         const auto value = text(control(app, theta_id));
@@ -138,23 +113,11 @@ void reset_simulation(App& app) {
     // Newtonovu gravitaciju kao benchmark; ne uvodimo drugi 2D zakon sile.
     std::fill(bodies.z.begin(), bodies.z.end(), nbody::Real(0));
     nbody::Acceleration acceleration;
-    omp_set_num_threads(int(threads));
-    // Provjeravamo stvarnu velicinu OpenMP tima jednom pri resetu. Sistemska
-    // ogranicenja mogu dozvoliti manje niti nego sto je korisnik zatrazio.
-    int active_threads = 1;
-    if (nbody::parallel(backend)) {
-        #pragma omp parallel
-        {
-            #pragma omp single
-            active_threads = omp_get_num_threads();
-        }
-    }
     nbody::accelerations(bodies, acceleration, config, backend);
     app.bodies = std::move(bodies);
     app.acceleration = std::move(acceleration);
     app.config = config;
     app.backend = backend;
-    app.threads = active_threads;
     app.clustered = clustered;
     app.steps = 0;
     app.simulation_time = app.compute_ms = 0;
@@ -256,33 +219,28 @@ void create_controls(App& app) {
     const auto title = child(app, L"STATIC", L"N-body 2D", 0, 0, 24, 20, 250, 32);
     SendMessageW(title, WM_SETFONT, WPARAM(app.heading_font), TRUE);
     child(app, L"STATIC", L"CPU simulacija gravitacije", 0, 0, 24, 54, 250, 22);
-    const auto cpu_info = L"Jezgre: " + (app.physical_cores ? std::to_wstring(app.physical_cores) : L"?")
-        + L"   Logicki procesori: " + std::to_wstring(app.logical_processors);
-    child(app, L"STATIC", cpu_info.c_str(), 0, 0, 24, 80, 252, 18);
-    const auto thread_label = L"Broj CPU niti (1-" + std::to_wstring(app.logical_processors) + L")";
     const wchar_t* labels[] = {L"Broj tijela (1-10000)", L"Seed pocetnog stanja", L"Pocetni raspored",
-        L"Implementacija", thread_label.c_str(), L"Theta (Barnes-Hut)"};
-    for (int k = 0; k < 6; ++k) child(app, L"STATIC", labels[k], 0, 0, 24, 100 + k * 64, 252, 22);
-    child(app, L"EDIT", L"512", ES_NUMBER | WS_TABSTOP, count_id, 24, 122, 252, 30);
-    child(app, L"EDIT", L"42", ES_NUMBER | WS_TABSTOP, seed_id, 24, 186, 186, 30);
-    child(app, L"BUTTON", L"Novi", WS_TABSTOP, random_id, 218, 186, 58, 30);
-    const auto distribution = child(app, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, distribution_id, 24, 250, 252, 180);
+        L"Implementacija", L"Theta (Barnes-Hut)"};
+    for (int k = 0; k < 5; ++k) child(app, L"STATIC", labels[k], 0, 0, 24, 84 + k * 64, 252, 22);
+    child(app, L"EDIT", L"512", ES_NUMBER | WS_TABSTOP, count_id, 24, 106, 252, 30);
+    child(app, L"EDIT", L"42", ES_NUMBER | WS_TABSTOP, seed_id, 24, 170, 186, 30);
+    child(app, L"BUTTON", L"Novi", WS_TABSTOP, random_id, 218, 170, 58, 30);
+    const auto distribution = child(app, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, distribution_id, 24, 234, 252, 180);
     for (auto label : {L"Ravnomjerno", L"Dva klastera"}) SendMessageW(distribution, CB_ADDSTRING, 0, LPARAM(label));
     SendMessageW(distribution, CB_SETCURSEL, 0, 0);
-    const auto backend = child(app, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, backend_id, 24, 314, 252, 300);
+    const auto backend = child(app, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, backend_id, 24, 298, 252, 300);
     for (auto label : backend_labels) SendMessageW(backend, CB_ADDSTRING, 0, LPARAM(label));
-    SendMessageW(backend, CB_SETCURSEL, 7, 0);
-    child(app, L"EDIT", std::to_wstring(std::min(4, app.logical_processors)).c_str(), ES_NUMBER | WS_TABSTOP, threads_id, 24, 378, 252, 30);
-    child(app, L"EDIT", L"0.5", WS_TABSTOP, theta_id, 24, 442, 252, 30);
-    child(app, L"BUTTON", L"Pokreni", BS_DEFPUSHBUTTON | WS_TABSTOP, start_id, 24, 500, 252, 38);
-    child(app, L"BUTTON", L"Resetuj", WS_TABSTOP, reset_id, 24, 550, 122, 34);
-    child(app, L"BUTTON", L"Uklopi prikaz", WS_TABSTOP, fit_id, 154, 550, 122, 34);
-    child(app, L"STATIC", L"Isti seed daje isti raspored.\nPromjene: Pokreni ili Resetuj.", 0, 0, 24, 602, 252, 46);
-    child(app, L"STATIC", L"", 0, status_id, 24, 664, 252, 96);
+    const auto index = std::find(nbody::backends.begin(), nbody::backends.end(), default_backend);
+    SendMessageW(backend, CB_SETCURSEL, index - nbody::backends.begin(), 0);
+    child(app, L"EDIT", L"0.5", WS_TABSTOP, theta_id, 24, 362, 252, 30);
+    child(app, L"BUTTON", L"Pokreni", BS_DEFPUSHBUTTON | WS_TABSTOP, start_id, 24, 420, 252, 38);
+    child(app, L"BUTTON", L"Resetuj", WS_TABSTOP, reset_id, 24, 470, 122, 34);
+    child(app, L"BUTTON", L"Uklopi prikaz", WS_TABSTOP, fit_id, 154, 470, 122, 34);
+    child(app, L"STATIC", L"Isti seed daje isti raspored.\nPromjene: Pokreni ili Resetuj.", 0, 0, 24, 522, 252, 46);
+    child(app, L"STATIC", L"", 0, status_id, 24, 584, 252, 96);
 }
 
 // Windows ovdje salje klikove, promjene polja, tajmer i zahtjeve za crtanje.
-// Obrada je u jednoj niti; OpenMP koristi niti samo unutar izabranog solvera.
 LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     auto* app = reinterpret_cast<App*>(GetWindowLongPtrW(window, GWLP_USERDATA));
     if (message == WM_NCCREATE) {
@@ -294,7 +252,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
     try {
         switch (message) {
         case WM_CREATE:
-            app->physical_cores = physical_core_count();
             app->dpi_scale = GetDpiForWindow(window) / 96.0;
             app->font = CreateFontW(-px(*app, 14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
                 OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -364,7 +321,6 @@ LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 
 int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int show) {
     SetProcessDPIAware();
-    omp_set_dynamic(0);
     App app;
     WNDCLASSW window_class{};
     window_class.lpfnWndProc = window_proc;

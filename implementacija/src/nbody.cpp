@@ -15,11 +15,8 @@ std::string_view name(Backend backend) {
     case Backend::sequential: return "sequential";
     case Backend::blocked: return "blocked";
     case Backend::simd: return "simd";
-    case Backend::openmp: return "openmp";
-    case Backend::openmp_simd: return "openmp_simd";
     case Backend::bh_sequential: return "bh_sequential";
     case Backend::bh_optimized: return "bh_optimized";
-    case Backend::bh_openmp: return "bh_openmp";
     }
     throw std::invalid_argument("Nepoznata verzija algoritma");
 }
@@ -31,12 +28,8 @@ Backend parse_backend(std::string_view value) {
     throw std::invalid_argument("Nepoznata verzija algoritma");
 }
 
-bool parallel(Backend backend) {
-    return backend == Backend::openmp || backend == Backend::openmp_simd || backend == Backend::bh_openmp;
-}
-
 bool barnes_hut_backend(Backend backend) {
-    return backend == Backend::bh_sequential || backend == Backend::bh_optimized || backend == Backend::bh_openmp;
+    return backend == Backend::bh_sequential || backend == Backend::bh_optimized;
 }
 
 void validate(const Bodies& bodies, const Config& config) {
@@ -103,11 +96,8 @@ void accelerations(const Bodies& bodies, Acceleration& acceleration,
     case Backend::sequential: sequential(bodies, acceleration, config); break;
     case Backend::blocked: blocked(bodies, acceleration, config); break;
     case Backend::simd: simd(bodies, acceleration, config); break;
-    case Backend::openmp: openmp(bodies, acceleration, config); break;
-    case Backend::openmp_simd: openmp_simd(bodies, acceleration, config); break;
     case Backend::bh_sequential:
-    case Backend::bh_optimized:
-    case Backend::bh_openmp: barnes_hut(bodies, acceleration, config, backend, timing); break;
+    case Backend::bh_optimized: barnes_hut(bodies, acceleration, config, backend, timing); break;
     default: throw std::invalid_argument("Nepoznata verzija algoritma");
     }
 }
