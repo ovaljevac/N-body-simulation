@@ -1,4 +1,5 @@
 #include "src/nbody.h"
+#include <omp.h>
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -61,8 +62,8 @@ void coincident_positions() {
 }
 
 // Neparne velicine i blokovi 7/19 provjeravaju posljednji nepotpuni blok.
-// Na istim ulazima provjeravamo rezultate prema FP64 referenci.
-void reference_comparison() {
+// Na istim ulazima provjeravamo FP64 referencu i jednakost paralelnog rezultata.
+void reference_and_threads() {
     Config config;
     config.theta = 0; // Svi algoritmi tada racunaju bez grupne aproksimacije.
     config.target_block = 7;
@@ -72,9 +73,15 @@ void reference_comparison() {
             const auto bodies = initial_state(n, 42, distribution);
             const auto reference = reference_forces(bodies, config);
             for (auto backend : backends) {
-                Acceleration a;
-                accelerations(bodies, a, config, backend);
-                require(compare(a, reference).relative_l2 < tolerance, "Direct referenca: " + std::string(name(backend)));
+                Acceleration serial, a;
+                for (int threads : {1, 4}) {
+                    if (!parallel(backend) && threads != 1) continue;
+                    omp_set_num_threads(threads);
+                    accelerations(bodies, a, config, backend);
+                    require(compare(a, reference).relative_l2 < tolerance, "Direct referenca: " + std::string(name(backend)));
+                    if (threads == 1) serial = a;
+                    else require(same(a, serial), "Rezultat ne smije zavisiti od broja niti");
+                }
             }
         }
     }
@@ -112,7 +119,7 @@ void bh_approximation() {
         const auto reference = reference_forces(bodies, config);
         Acceleration baseline;
         accelerations(bodies, baseline, config, Backend::bh_sequential);
-        for (auto backend : {Backend::bh_sequential, Backend::bh_optimized}) {
+        for (auto backend : {Backend::bh_sequential, Backend::bh_optimized, Backend::bh_openmp}) {
             Acceleration a;
             accelerations(bodies, a, config, backend);
             require(compare(a, reference).relative_l2 < 0.01, "BH greska mora biti ispod 1% na ovom skupu");
@@ -132,7 +139,7 @@ void bh_depth_limit() {
     bodies.x[0] = 1;
     for (std::size_t i = 1; i < bodies.size(); ++i) bodies.x[i] = Real(1e-8 * double(i));
     const auto reference = reference_forces(bodies, config);
-    for (auto backend : {Backend::bh_sequential, Backend::bh_optimized}) {
+    for (auto backend : {Backend::bh_sequential, Backend::bh_optimized, Backend::bh_openmp}) {
         Acceleration a;
         SolverTiming timing;
         accelerations(bodies, a, config, backend, &timing);
@@ -143,10 +150,12 @@ void bh_depth_limit() {
 
 int main() {
     try {
+        omp_set_dynamic(0);
+        omp_set_num_threads(4);
         empty_and_single();
         known_pair();
         coincident_positions();
-        reference_comparison();
+        reference_and_threads();
         short_simulation();
         bh_approximation();
         bh_depth_limit();

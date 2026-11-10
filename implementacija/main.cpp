@@ -1,5 +1,6 @@
 #include "src/nbody.h"
 
+#include <omp.h>
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -16,6 +17,7 @@
 struct Options {
     std::size_t count = 1000, steps = 5, repeats = 5, warmup = 1;
     std::uint64_t seed = 42;
+    int threads = 4;
     double dt = 0.001;
     double max_relative_error = 0.05;
     std::string algorithm = "direct";
@@ -45,11 +47,12 @@ double read_number(const std::string& text) {
 
 Options read_options(int argc, char** argv) {
     Options options;
+    options.threads = std::min(4, omp_get_max_threads());
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
         if (key == "--help") {
-            std::cout << "nbody_bench --n N --algorithm direct|barnes_hut|all --backend all|sequential|blocked|simd|bh_sequential|bh_optimized\n"
-                      << " --mode force|simulate --steps K --repeats R --warmup W\n"
+            std::cout << "nbody_bench --n N --algorithm direct|barnes_hut|all --backend all|sequential|blocked|simd|openmp|openmp_simd|bh_sequential|bh_optimized|bh_openmp\n"
+                      << " --threads P --mode force|simulate --steps K --repeats R --warmup W\n"
                       << " --distribution uniform|clustered --seed S --epsilon E --gravity G --dt H\n"
                       << " --target-block B --source-block B --output file.csv\n"
                       << " --theta T --leaf-capacity L --max-depth D --max-relative-error E\n"
@@ -63,6 +66,13 @@ Options read_options(int argc, char** argv) {
         else if (key == "--repeats") options.repeats = read_integer(value);
         else if (key == "--warmup") options.warmup = read_integer(value);
         else if (key == "--seed") options.seed = read_integer(value);
+        else if (key == "--threads") {
+            const auto threads = read_integer(value);
+            if (threads == 0 || threads > std::uint64_t(std::numeric_limits<int>::max())) {
+                throw std::invalid_argument("Broj niti mora biti pozitivan int");
+            }
+            options.threads = int(threads);
+        }
         else if (key == "--dt") options.dt = read_number(value);
         else if (key == "--epsilon") options.config.epsilon = nbody::Real(read_number(value));
         else if (key == "--gravity") options.config.gravity = nbody::Real(read_number(value));
@@ -102,7 +112,13 @@ void run_benchmark(const Options& options, std::ostream& output) {
     const auto initial_momentum = nbody::momentum(initial);
     const char* precision = sizeof(nbody::Real) == 4 ? "float" : "double";
 
-    output << "backend,precision,mode,distribution,n,seed,gravity,epsilon,dt,steps,repeat,"
+    omp_set_dynamic(0);
+    omp_set_num_threads(options.threads);
+    int actual_threads = 1;
+    #pragma omp parallel reduction(max:actual_threads)
+    actual_threads = omp_get_num_threads();
+
+    output << "backend,precision,mode,distribution,n,threads,requested_threads,seed,gravity,epsilon,dt,steps,repeat,"
            << "total_seconds,seconds_per_step,relative_l2,max_absolute,energy_relative_drift,momentum_absolute_drift,"
            << "checksum,target_block,source_block,compiler,build_type,native,algorithm,theta,leaf_capacity,max_depth,"
            << "max_relative_error,tree_seconds_per_step,force_seconds_per_step,tree_nodes,tree_depth\n";
@@ -170,7 +186,7 @@ void run_benchmark(const Options& options, std::ostream& output) {
             const double momentum_drift = std::sqrt(px * px + py * py + pz * pz);
 
             output << nbody::name(backend) << ',' << precision << ',' << options.mode << ',' << options.distribution << ','
-                   << options.count << ','
+                   << options.count << ',' << (nbody::parallel(backend) ? actual_threads : 1) << ',' << options.threads << ','
                    << options.seed << ',' << options.config.gravity << ',' << options.config.epsilon << ',' << options.dt << ','
                    << options.steps << ',' << repeat - options.warmup << ',' << seconds << ',' << seconds / options.steps << ','
                    << error.relative_l2 << ',' << error.max_absolute << ',' << energy_drift << ',' << momentum_drift << ','

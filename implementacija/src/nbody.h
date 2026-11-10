@@ -16,9 +16,11 @@ using Real = double;
 using Real = float;
 #endif
 
-enum class Backend { sequential, blocked, simd, bh_sequential, bh_optimized };
-constexpr std::array backends = {Backend::sequential, Backend::blocked, Backend::simd,
-    Backend::bh_sequential, Backend::bh_optimized};
+enum class Backend { sequential, blocked, simd, openmp, openmp_simd,
+    bh_sequential, bh_optimized, bh_openmp };
+constexpr std::array backends = {Backend::sequential, Backend::blocked,
+    Backend::simd, Backend::openmp, Backend::openmp_simd,
+    Backend::bh_sequential, Backend::bh_optimized, Backend::bh_openmp};
 
 // Direct koristi velicine blokova, a Barnes-Hut theta i granice podjele.
 // theta=0 otvara sve cvorove; veci theta dopusta vise grupnih aproksimacija.
@@ -69,6 +71,7 @@ struct Error {
 
 std::string_view name(Backend backend);
 Backend parse_backend(std::string_view value);
+bool parallel(Backend backend);
 bool barnes_hut_backend(Backend backend);
 void validate(const Bodies& bodies, const Config& config);
 Bodies initial_state(std::size_t count, std::uint64_t seed, std::string_view distribution);
@@ -78,6 +81,8 @@ Bodies initial_state(std::size_t count, std::uint64_t seed, std::string_view dis
 void sequential(const Bodies&, Acceleration&, const Config&);
 void blocked(const Bodies&, Acceleration&, const Config&);
 void simd(const Bodies&, Acceleration&, const Config&);
+void openmp(const Bodies&, Acceleration&, const Config&);
+void openmp_simd(const Bodies&, Acceleration&, const Config&);
 void barnes_hut(const Bodies&, Acceleration&, const Config&, Backend, SolverTiming* = nullptr);
 void accelerations(const Bodies&, Acceleration&, const Config&, Backend, SolverTiming* = nullptr);
 
